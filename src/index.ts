@@ -25,6 +25,53 @@ const MatchContextInputSchema = z.object({
   offerId: z.string().uuid('offerId must be a valid UUID'),
 })
 
+const CvContentSchema = z.object({
+  header: z.object({
+    fullName: z.string(),
+    title: z.string(),
+    email: z.string(),
+    phone: z.string().optional(),
+    location: z.string().optional(),
+  }),
+  summary: z.string(),
+  experience: z.array(z.object({
+    company: z.string(),
+    role: z.string(),
+    period: z.string(),
+    highlights: z.array(z.string()).min(1, 'highlights must be a non-empty string[] — do NOT use "description" or "summary"'),
+  })),
+  education: z.array(z.object({
+    institution: z.string(),
+    degree: z.string(),
+    year: z.string(),
+  })),
+  skills: z.array(z.object({
+    category: z.string(),
+    items: z.array(z.string()),
+  })).min(1, 'skills must be Array<{category: string, items: string[]}> — do NOT use a flat string[]'),
+  languages: z.array(z.object({
+    name: z.string(),
+    level: z.string(),
+  })).optional(),
+})
+
+const LdmContentSchema = z.object({
+  greeting: z.string(),
+  introduction: z.string(),
+  body: z.array(z.string()),
+  conclusion: z.string(),
+  closing: z.string(),
+  personalizations: z.array(z.object({
+    text: z.string(),
+    reason: z.string(),
+  })),
+})
+
+const SaveDocumentInputSchema = z.object({
+  offerId: z.string().uuid('offerId must be a valid UUID'),
+  tone: z.string().optional(),
+})
+
 const ScanInputSchema = z.object({
   rawContent: z
     .string()
@@ -373,19 +420,32 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (req.params.name === 'save_cv' || req.params.name === 'save_ldm') {
     const docType = req.params.name === 'save_cv' ? 'cv' : 'ldm'
-    const args = req.params.arguments as { offerId?: unknown; content?: unknown; tone?: unknown } | undefined
+    const args = req.params.arguments as Record<string, unknown> | undefined
 
-    if (typeof args?.offerId !== 'string' || typeof args?.content !== 'object' || args.content === null) {
+    const baseValidation = SaveDocumentInputSchema.safeParse(args ?? {})
+    if (!baseValidation.success) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'Invalid input: offerId (string) and content (object) are required' }],
+        content: [{ type: 'text', text: `Invalid input: ${baseValidation.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}` }],
+      }
+    }
+
+    const contentSchema = docType === 'cv' ? CvContentSchema : LdmContentSchema
+    const contentValidation = contentSchema.safeParse(args?.content)
+    if (!contentValidation.success) {
+      const issues = contentValidation.error.issues
+        .map(i => `content.${i.path.join('.')}: ${i.message}`)
+        .join('\n')
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Invalid content schema — fix these fields and retry:\n${issues}` }],
       }
     }
 
     const res = await fetch(`${API_URL}/api/mcp/documents/${docType}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
-      body: JSON.stringify({ offerId: args.offerId, content: args.content, tone: args.tone }),
+      body: JSON.stringify({ offerId: baseValidation.data.offerId, content: contentValidation.data, tone: baseValidation.data.tone }),
     })
 
     if (res.status === 401) {

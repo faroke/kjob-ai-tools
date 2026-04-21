@@ -4,6 +4,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
@@ -97,10 +99,64 @@ async function scanOffer(input: z.infer<typeof ScanInputSchema>): Promise<ScanRe
   return { ok: false, code: 'STREAM_CLOSED', message: 'Stream ended without a result' }
 }
 
+const KJOB_WORKFLOW_PROMPT = `You are assisting a job seeker using kjob, an AI-powered job application assistant.
+
+## Tools available
+
+| Tool | Description | Credits |
+|------|-------------|---------|
+| get_profile | Fetch the candidate's structured CV + job preferences | Free |
+| get_match_context(offerId) | Fetch a saved offer + candidate CV for local matching | Free |
+| scan_offer(rawContent, sourceUrl?) | Parse and save a job offer via kjob AI | Costs credits |
+
+## Workflow
+
+### Session start
+Call get_profile() immediately to load the candidate's context (experiences, skills, education, job preferences). This lets you give informed answers without asking the user to repeat themselves.
+
+### When the user shares a job offer (URL or pasted text)
+1. Call scan_offer({ rawContent, sourceUrl? }) — extracts and saves the offer. Returns offerId.
+2. Call get_match_context({ offerId }) — returns offer details + candidate CV.
+3. Analyse the fit yourself and present:
+   - Estimated fit score (e.g. 7/10)
+   - Key strengths matching the requirements
+   - Gaps or weak areas vs. requirements
+   - Concrete suggestions (keywords to highlight, missing skills to address)
+
+## Rules
+- Always call get_profile first — it's free and gives full context.
+- Do NOT trigger the kjob match API (/api/offers/{id}/match) — it costs credits. Use get_match_context + your own analysis.
+- If get_profile or get_match_context returns 403: the user has no parsed CV — ask them to upload their CV in kjob settings (Profile tab).
+- If scan_offer returns 402: the user has insufficient credits.`
+
 const server = new Server(
   { name: 'kjob-mcp', version: '0.1.0' },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, prompts: {} } }
 )
+
+server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  prompts: [
+    {
+      name: 'kjob-workflow',
+      description: 'Load the kjob assistant workflow — tools available, when to call them, and rules to avoid wasting credits. Call this at the start of a session.',
+    },
+  ],
+}))
+
+server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+  if (req.params.name !== 'kjob-workflow') {
+    throw new Error(`Unknown prompt: ${req.params.name}`)
+  }
+  return {
+    description: 'kjob assistant workflow guide',
+    messages: [
+      {
+        role: 'user',
+        content: { type: 'text', text: KJOB_WORKFLOW_PROMPT },
+      },
+    ],
+  }
+})
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [

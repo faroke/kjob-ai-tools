@@ -143,6 +143,5 @@ Only use `scan_offer` if the content is too complex or ambiguous to extract reli
 ## Installation
 
 ```sh
-mkdir -p ~/.claude/skills/kjob-mcp
-cp node_modules/@kjob/mcp-server/SKILL.md ~/.claude/skills/kjob-mcp/SKILL.md
+npx skills add faroke/kjob-ai-tools
 ```

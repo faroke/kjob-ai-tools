@@ -37,7 +37,7 @@ from this repo). It makes authenticated HTTPS calls to the existing kjob API.
       "command": "npx",
       "args": ["-y", "@kjob/mcp-server"],
       "env": {
-        "KJOB_API_URL": "https://your-kjob-domain.app",
+        "KJOB_API_URL": "https://kjob.fr",
         "KJOB_API_KEY": "kjob_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       }
     }
@@ -64,5 +64,5 @@ Pair it with `pnpm --filter @kjob/web-next dev` to test against the local API.
 
 | Name            | Required | Description                                       |
 | --------------- | -------- | ------------------------------------------------- |
-| `KJOB_API_URL`  | yes      | Base URL of the kjob web app (no trailing slash). |
+| `KJOB_API_URL`  | yes      | Base URL of the kjob web app, e.g. `https://kjob.fr`. |
 | `KJOB_API_KEY`  | yes      | Personal API token; must start with `kjob_`.     |

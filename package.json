@@ -1,19 +1,22 @@
 {
   "name": "@kjob/mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for launching kjob offer scans from a local device.",
   "type": "module",
   "bin": {
-    "kjob-mcp": "./dist/index.js"
+    "kjob-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

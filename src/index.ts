@@ -67,6 +67,20 @@ const LdmContentSchema = z.object({
   })),
 })
 
+const OfferMatchResultSchema = z.object({
+  score: z.number().min(0).max(100, 'score must be 0–100'),
+  matched: z.array(z.object({
+    requirement: z.string(),
+    profileEvidence: z.string(),
+  })),
+  missing: z.array(z.object({
+    requirement: z.string(),
+    suggestion: z.string(),
+  })),
+  strengths: z.array(z.string()),
+  summary: z.string(),
+})
+
 const SaveDocumentInputSchema = z.object({
   offerId: z.string().uuid('offerId must be a valid UUID'),
   tone: z.string().optional(),
@@ -154,7 +168,8 @@ const KJOB_WORKFLOW_PROMPT = `You are assisting a job seeker using kjob, an AI-p
 |------|---------|-------------|
 | get_profile() | Free | Candidate's structured CV + job preferences |
 | create_offer(rawContent, parsedContent, sourceUrl?) | Free | Save an offer you parsed yourself — preferred |
-| get_match_context(offerId) | Free | Saved offer details + candidate CV |
+| get_match_context(offerId) | Free | Stored match result (404 + context if not computed) |
+| save_match_context(offerId, matchResult) | Free | Save Claude-computed match to kjob |
 | save_cv(offerId, content, tone?) | Free | Save a Claude-generated CV to kjob |
 | save_ldm(offerId, content, tone?) | Free | Save a Claude-generated cover letter to kjob |
 | scan_offer(rawContent, sourceUrl?) | 5 credits | Parse and save via kjob AI — avoid if possible |
@@ -172,6 +187,22 @@ Call get_profile() to load the candidate's full context. Do this before anything
 
 ### When the user shares a job offer (fallback — costs 5 credits)
 Only use scan_offer if the offer content is too complex or ambiguous to extract reliably.
+
+### When the user asks to analyse the match for an offer
+1. get_match_context({ offerId })
+   - 200 → match already computed, show { matchResult } to user
+   - 404 with { error: "NO_MATCH", context: { offer, profile } } → compute it yourself:
+2. Analyse fit using context.offer + context.profile (+ confirmedSkillsContext)
+3. save_match_context({ offerId, matchResult }) → stores it in kjob
+
+## OfferMatchResult schema
+{
+  "score": number (0–100),
+  "matched": [{ "requirement": "string", "profileEvidence": "string" }],
+  "missing": [{ "requirement": "string", "suggestion": "string" }],
+  "strengths": ["string"],
+  "summary": "string (2-3 sentences)"
+}
 
 ### When the user asks to generate a CV
 1. get_match_context({ offerId }) if not already done
@@ -324,9 +355,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'save_match_context',
+      description:
+        'Save a Claude-computed match result to kjob for an offer — 0 credits. Returns 200 on success. Schema: { score: 0–100, matched: [{requirement, profileEvidence}], missing: [{requirement, suggestion}], strengths: string[], summary: string }',
+      inputSchema: {
+        type: 'object',
+        required: ['offerId', 'matchResult'],
+        properties: {
+          offerId: { type: 'string', description: 'The offer UUID.' },
+          matchResult: {
+            type: 'object',
+            description: 'OfferMatchResult: { score, matched, missing, strengths, summary }',
+          },
+        },
+      },
+    },
+    {
       name: 'get_match_context',
       description:
-        'Fetch offer details and candidate CV data for a local match analysis. Use this to analyse fit WITHOUT spending kjob credits — do the scoring yourself based on the returned data.',
+        'Get the stored match result for an offer. Returns 200 with { matchResult, context } if a match exists, or 404 with { error: "NO_MATCH", context: { offer, profile } } if not yet computed — use the context data to run save_match_context.',
       inputSchema: {
         type: 'object',
         required: ['offerId'],
@@ -465,6 +512,34 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         text: `${docType.toUpperCase()} saved. documentId=${data.documentId}\nView: ${data.viewUrl}`,
       }],
     }
+  }
+
+  if (req.params.name === 'save_match_context') {
+    const args = req.params.arguments as Record<string, unknown> | undefined
+
+    const offerIdParsed = z.string().uuid('offerId must be a valid UUID').safeParse(args?.offerId)
+    if (!offerIdParsed.success) {
+      return { isError: true, content: [{ type: 'text', text: `Invalid input: ${offerIdParsed.error.issues[0]?.message}` }] }
+    }
+
+    const matchParsed = OfferMatchResultSchema.safeParse(args?.matchResult)
+    if (!matchParsed.success) {
+      const issues = matchParsed.error.issues.map(i => `matchResult.${i.path.join('.')}: ${i.message}`).join('\n')
+      return { isError: true, content: [{ type: 'text', text: `Invalid matchResult schema — fix and retry:\n${issues}` }] }
+    }
+
+    const res = await fetch(`${API_URL}/api/mcp/match-context/${offerIdParsed.data}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ matchResult: matchParsed.data }),
+    })
+
+    if (res.status === 401) return { isError: true, content: [{ type: 'text', text: 'UNAUTHORIZED: Invalid API key' }] }
+    if (res.status === 404) return { isError: true, content: [{ type: 'text', text: 'NOT_FOUND: Offer not found' }] }
+    if (!res.ok) return { isError: true, content: [{ type: 'text', text: `HTTP_${res.status}: ${res.statusText}` }] }
+
+    const data = await res.json() as { matchResult: unknown }
+    return { content: [{ type: 'text', text: `Match saved.\n${JSON.stringify(data.matchResult, null, 2)}` }] }
   }
 
   if (req.params.name === 'get_match_context') {

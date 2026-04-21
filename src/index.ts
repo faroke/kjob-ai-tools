@@ -106,20 +106,25 @@ const KJOB_WORKFLOW_PROMPT = `You are assisting a job seeker using kjob, an AI-p
 | Tool | Credits | Description |
 |------|---------|-------------|
 | get_profile() | Free | Candidate's structured CV + job preferences |
+| create_offer(rawContent, parsedContent, sourceUrl?) | Free | Save an offer you parsed yourself — preferred |
 | get_match_context(offerId) | Free | Saved offer details + candidate CV |
 | save_cv(offerId, content, tone?) | Free | Save a Claude-generated CV to kjob |
 | save_ldm(offerId, content, tone?) | Free | Save a Claude-generated cover letter to kjob |
-| scan_offer(rawContent, sourceUrl?) | 5 credits | Parse and save a job offer via kjob AI |
+| scan_offer(rawContent, sourceUrl?) | 5 credits | Parse and save via kjob AI — avoid if possible |
 
 ## Workflow
 
 ### Session start
 Call get_profile() to load the candidate's full context. Do this before anything else.
 
-### When the user shares a job offer
-1. scan_offer({ rawContent, sourceUrl? }) → returns offerId
-2. get_match_context({ offerId }) → returns offer + profile data
-3. Analyse fit: score, strengths, gaps, suggestions
+### When the user shares a job offer (PREFERRED — 0 credits)
+1. Extract ParsedOfferContent yourself from the raw text/HTML (schema below)
+2. create_offer({ rawContent, parsedContent, sourceUrl? }) → returns offerId
+3. get_match_context({ offerId }) → returns offer + profile data
+4. Analyse fit: score, strengths, gaps, suggestions
+
+### When the user shares a job offer (fallback — costs 5 credits)
+Only use scan_offer if the offer content is too complex or ambiguous to extract reliably.
 
 ### When the user asks to generate a CV
 1. get_match_context({ offerId }) if not already done
@@ -130,6 +135,18 @@ Call get_profile() to load the candidate's full context. Do this before anything
 1. get_match_context({ offerId }) if not already done
 2. Generate LdmContentJson yourself using the schema and instructions below
 3. save_ldm({ offerId, content: <LdmContentJson>, tone? })
+
+## ParsedOfferContent schema (for create_offer)
+{
+  "title": "string | null",
+  "company": "string | null",
+  "location": "string | null",
+  "contractType": "string | null (CDI, CDD, Freelance, Stage, Alternance…)",
+  "salary": "string | null",
+  "description": "string | null (full job description, max 5000 chars)",
+  "requirements": ["string"] or null,
+  "benefits": ["string"] or null
+}
 
 ## CvContentJson schema
 {
@@ -155,7 +172,8 @@ LDM generation rules: tailor every paragraph to the specific offer and company; 
 
 ## Rules
 - Always call get_profile first — free, gives full context.
-- Never call /api/offers/{id}/match or /api/offers/{id}/generate/cv or /api/offers/{id}/generate/ldm — those cost credits. Do the work yourself and use save_cv / save_ldm.
+- Always prefer create_offer over scan_offer — extract ParsedOfferContent yourself, 0 credits.
+- Never call /api/offers/{id}/match, /api/offers/{id}/generate/cv, or /api/offers/{id}/generate/ldm — those cost credits. Do the work yourself.
 - 403 on get_profile or get_match_context → user has no parsed CV, ask them to upload in kjob Profile tab.
 - 402 on scan_offer → insufficient credits.`
 
@@ -197,6 +215,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: {},
+      },
+    },
+    {
+      name: 'create_offer',
+      description:
+        'Save a job offer you already parsed yourself to kjob — 0 credits. Use this instead of scan_offer: extract the offer fields from the raw text/HTML yourself, then call this to persist it.',
+      inputSchema: {
+        type: 'object',
+        required: ['rawContent', 'parsedContent'],
+        properties: {
+          rawContent: { type: 'string', description: 'Original raw text or HTML of the offer.' },
+          parsedContent: {
+            type: 'object',
+            description: 'ParsedOfferContent: { title, company, location, contractType, salary, description, requirements, benefits }',
+          },
+          sourceUrl: { type: 'string', description: 'Optional URL the offer was copied from.' },
+        },
       },
     },
     {
@@ -294,6 +329,38 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     const data = await res.json()
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+  }
+
+  if (req.params.name === 'create_offer') {
+    const args = req.params.arguments as { rawContent?: unknown; parsedContent?: unknown; sourceUrl?: unknown } | undefined
+
+    if (typeof args?.rawContent !== 'string' || typeof args?.parsedContent !== 'object' || args.parsedContent === null) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'Invalid input: rawContent (string) and parsedContent (object) are required' }],
+      }
+    }
+
+    const res = await fetch(`${API_URL}/api/mcp/offers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ rawContent: args.rawContent, parsedContent: args.parsedContent, sourceUrl: args.sourceUrl }),
+    })
+
+    if (res.status === 401) {
+      return { isError: true, content: [{ type: 'text', text: 'UNAUTHORIZED: Invalid API key' }] }
+    }
+    if (!res.ok) {
+      return { isError: true, content: [{ type: 'text', text: `HTTP_${res.status}: ${res.statusText}` }] }
+    }
+
+    const data = await res.json() as { offerId: string; viewUrl: string }
+    return {
+      content: [{
+        type: 'text',
+        text: `Offer saved. offerId=${data.offerId}\nOpen: ${data.viewUrl}`,
+      }],
+    }
   }
 
   if (req.params.name === 'save_cv' || req.params.name === 'save_ldm') {

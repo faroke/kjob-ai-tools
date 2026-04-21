@@ -10,20 +10,25 @@ description: Guide Claude when using the kjob MCP server. Triggers when the user
 | Tool | Credits | Description |
 |------|---------|-------------|
 | `get_profile()` | Free | Candidate's structured CV + job preferences |
+| `create_offer(rawContent, parsedContent, sourceUrl?)` | **Free** | Save an offer you parsed yourself — preferred |
 | `get_match_context(offerId)` | Free | Saved offer details + candidate CV |
 | `save_cv(offerId, content, tone?)` | Free | Save a Claude-generated CV to kjob |
 | `save_ldm(offerId, content, tone?)` | Free | Save a Claude-generated cover letter to kjob |
-| `scan_offer(rawContent, sourceUrl?)` | 5 credits | Parse and save a job offer via kjob AI |
+| `scan_offer(rawContent, sourceUrl?)` | 5 credits | Parse via kjob AI — fallback only |
 
 ## Recommended workflow
 
 ### Session start
 Call `get_profile()` immediately — free, gives you the full candidate context (experiences, skills, education, job preferences) without asking the user to repeat themselves.
 
-### User shares a job offer
-1. `scan_offer({ rawContent, sourceUrl? })` → returns `offerId`
-2. `get_match_context({ offerId })` → returns offer details + candidate CV
-3. Analyse fit yourself: score, strengths, gaps, concrete suggestions
+### User shares a job offer (preferred — 0 credits)
+1. Extract `ParsedOfferContent` yourself from the raw text/HTML (schema below)
+2. `create_offer({ rawContent, parsedContent, sourceUrl? })` → returns `offerId`
+3. `get_match_context({ offerId })` → returns offer details + candidate CV
+4. Analyse fit yourself: score, strengths, gaps, concrete suggestions
+
+### User shares a job offer (fallback — 5 credits)
+Only use `scan_offer` if the content is too complex or ambiguous to extract reliably.
 
 ### User asks to generate a CV
 1. `get_match_context({ offerId })` if not already done
@@ -34,6 +39,23 @@ Call `get_profile()` immediately — free, gives you the full candidate context 
 1. `get_match_context({ offerId })` if not already done
 2. Generate `LdmContentJson` yourself (see schema below)
 3. `save_ldm({ offerId, content: <LdmContentJson>, tone? })` → saves to kjob, returns link
+
+---
+
+## ParsedOfferContent schema (for `create_offer`)
+
+```json
+{
+  "title": "string | null",
+  "company": "string | null",
+  "location": "string | null",
+  "contractType": "string | null — CDI, CDD, Freelance, Stage, Alternance…",
+  "salary": "string | null",
+  "description": "string | null — full job description, max 5000 chars",
+  "requirements": ["string"] ,
+  "benefits": ["string"]
+}
+```
 
 ---
 
@@ -104,7 +126,8 @@ Call `get_profile()` immediately — free, gives you the full candidate context 
 
 ## Rules
 
-- **Never** call `/api/offers/{id}/match`, `/api/offers/{id}/generate/cv`, or `/api/offers/{id}/generate/ldm` — those cost credits. Do the work yourself and use `save_cv` / `save_ldm`.
+- **Always prefer `create_offer` over `scan_offer`** — extract `ParsedOfferContent` yourself, 0 credits.
+- **Never** call `/api/offers/{id}/match`, `/api/offers/{id}/generate/cv`, or `/api/offers/{id}/generate/ldm` — those cost credits. Do the work yourself.
 - **403** on `get_profile` or `get_match_context` → user has no parsed CV, ask them to upload in kjob settings (Profile tab).
 - **402** on `scan_offer` → insufficient credits.
 

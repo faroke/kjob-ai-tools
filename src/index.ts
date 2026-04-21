@@ -105,6 +105,15 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
+      name: 'get_profile',
+      description:
+        'Fetch the candidate\'s structured CV and job preferences. Call this at the start of a session to understand who you are helping — no offerId needed. Returns parsedCvJson (experiences, skills, education), confirmedSkillsContext, and job preferences (targetRole, targetSectors, targetLocation, targetSalaryRange).',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
       name: 'get_match_context',
       description:
         'Fetch offer details and candidate CV data for a local match analysis. Use this to analyse fit WITHOUT spending kjob credits — do the scoring yourself based on the returned data.',
@@ -145,6 +154,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }))
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  if (req.params.name === 'get_profile') {
+    const res = await fetch(`${API_URL}/api/mcp/profile`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    })
+
+    if (res.status === 401) {
+      return { isError: true, content: [{ type: 'text', text: 'UNAUTHORIZED: Invalid API key' }] }
+    }
+    if (res.status === 404) {
+      return { isError: true, content: [{ type: 'text', text: 'NOT_FOUND: Profile not found' }] }
+    }
+    if (res.status === 403) {
+      return { isError: true, content: [{ type: 'text', text: 'FORBIDDEN: No CV parsed — ask the user to upload their CV in kjob settings first' }] }
+    }
+    if (!res.ok) {
+      return { isError: true, content: [{ type: 'text', text: `HTTP_${res.status}: ${res.statusText}` }] }
+    }
+
+    const data = await res.json()
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+  }
+
   if (req.params.name === 'get_match_context') {
     const parsed = MatchContextInputSchema.safeParse(req.params.arguments ?? {})
     if (!parsed.success) {

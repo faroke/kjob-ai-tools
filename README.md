@@ -48,21 +48,3 @@ from this repo). It makes authenticated HTTPS calls to the existing kjob API.
 ### Cursor / other MCP clients
 
 Same command and env vars; follow the client's MCP server registration docs.
-
-## Local development (owner)
-
-```sh
-pnpm --filter @kjob/mcp-server build
-KJOB_API_URL=http://localhost:3000 \
-KJOB_API_KEY=kjob_xxxx... \
-  node apps/mcp-server/dist/index.js
-```
-
-Pair it with `pnpm --filter @kjob/web-next dev` to test against the local API.
-
-## Environment variables
-
-| Name            | Required | Description                                       |
-| --------------- | -------- | ------------------------------------------------- |
-| `KJOB_API_URL`  | yes      | Base URL of the kjob web app, e.g. `https://www.kjob.fr`. |
-| `KJOB_API_KEY`  | yes      | Personal API token; must start with `kjob_`.     |

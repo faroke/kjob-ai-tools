@@ -67,8 +67,8 @@ Only use `scan_offer` if the content is too complex or ambiguous to extract reli
     "fullName": "string",
     "title": "string — job title adapted to the offer",
     "email": "string",
-    "phone": "string | null",
-    "location": "string | null"
+    "phone": "string (optional)",
+    "location": "string (optional)"
   },
   "summary": "string — 2-3 punchy sentences tailored to the offer",
   "experience": [
@@ -76,18 +76,25 @@ Only use `scan_offer` if the content is too complex or ambiguous to extract reli
       "company": "string",
       "role": "string",
       "period": "string",
-      "highlights": ["string — action verb + quantified result when possible"]
+      "highlights": ["string — action verb + quantified result"]
     }
   ],
   "education": [{ "institution": "string", "degree": "string", "year": "string" }],
-  "skills": [{ "category": "string", "items": ["string"] }],
+  "skills": [
+    { "category": "string — e.g. Langages, Frameworks, Outils", "items": ["string"] }
+  ],
   "languages": [{ "name": "string", "level": "string" }]
 }
 ```
 
+> **Common mistakes — these WILL crash the frontend:**
+> - `skills` must be `{ category, items[] }[]` — **never** a flat `string[]`
+> - `experience[].highlights` must be `string[]` — **never** `description` or `summary`
+> - `languages[].name` must be `name` — **never** `language`
+
 **Generation rules:**
 - Adapt summary and highlights to the offer requirements
-- Prioritise skills matching the offer; group by category
+- Group skills by category (Langages, Frameworks, Outils, Méthodologies…)
 - Use action verbs and metrics in highlights
 - If `confirmedSkillsContext` is present, include those skills first
 - Never invent information — only use data from `parsedCvJson`

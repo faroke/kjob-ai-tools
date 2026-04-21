@@ -148,16 +148,24 @@ Only use scan_offer if the offer content is too complex or ambiguous to extract 
   "benefits": ["string"] or null
 }
 
-## CvContentJson schema
+## CvContentJson schema — respect this EXACTLY, field names are strict
 {
-  "header": { "fullName": "string", "title": "string (job title adapted to the offer)", "email": "string", "phone": "string|null", "location": "string|null" },
-  "summary": "string (2-3 punchy sentences tailored to the offer)",
-  "experience": [{ "company": "string", "role": "string", "period": "string", "highlights": ["string (action verb + result)"] }],
+  "header": { "fullName": "string", "title": "string", "email": "string", "phone": "string (optional)", "location": "string (optional)" },
+  "summary": "string",
+  "experience": [
+    { "company": "string", "role": "string", "period": "string", "highlights": ["string", "string"] }
+  ],
   "education": [{ "institution": "string", "degree": "string", "year": "string" }],
-  "skills": [{ "category": "string", "items": ["string"] }],
+  "skills": [
+    { "category": "string (e.g. Langages, Frameworks, Outils)", "items": ["string", "string"] }
+  ],
   "languages": [{ "name": "string", "level": "string" }]
 }
-CV generation rules: adapt summary and highlights to the offer requirements; prioritise skills matching the offer; use action verbs and metrics; if confirmedSkillsContext is present, include those skills first; never invent information.
+STRICT RULES — common mistakes to avoid:
+- skills MUST be Array<{ category: string, items: string[] }> — NEVER a flat string[]
+- experience items MUST have "highlights": string[] — NEVER "description" or "summary"
+- languages items MUST use "name" — NEVER "language"
+CV generation rules: adapt summary and highlights to offer requirements; group skills by category; use action verbs and metrics; prioritise confirmedSkillsContext skills; never invent information.
 
 ## LdmContentJson schema
 {

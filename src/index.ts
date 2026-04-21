@@ -19,6 +19,10 @@ if (!API_KEY || !API_KEY.startsWith('kjob_')) {
   process.exit(1)
 }
 
+const MatchContextInputSchema = z.object({
+  offerId: z.string().uuid('offerId must be a valid UUID'),
+})
+
 const ScanInputSchema = z.object({
   rawContent: z
     .string()
@@ -101,6 +105,21 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
+      name: 'get_match_context',
+      description:
+        'Fetch offer details and candidate CV data for a local match analysis. Use this to analyse fit WITHOUT spending kjob credits — do the scoring yourself based on the returned data.',
+      inputSchema: {
+        type: 'object',
+        required: ['offerId'],
+        properties: {
+          offerId: {
+            type: 'string',
+            description: 'The offer UUID returned by scan_offer.',
+          },
+        },
+      },
+    },
+    {
       name: 'scan_offer',
       description:
         'Scan a raw job offer (text or HTML) with kjob. Extracts title, company, location, requirements, etc. and saves it as an Offer. Returns the offerId on success. Costs credits.',
@@ -126,6 +145,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }))
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  if (req.params.name === 'get_match_context') {
+    const parsed = MatchContextInputSchema.safeParse(req.params.arguments ?? {})
+    if (!parsed.success) {
+      return {
+        isError: true,
+        content: [
+          { type: 'text', text: `Invalid input: ${parsed.error.issues[0]?.message ?? 'bad args'}` },
+        ],
+      }
+    }
+
+    const res = await fetch(
+      `${API_URL}/api/mcp/match-context/${parsed.data.offerId}`,
+      { headers: { Authorization: `Bearer ${API_KEY}` } }
+    )
+
+    if (res.status === 401) {
+      return { isError: true, content: [{ type: 'text', text: 'UNAUTHORIZED: Invalid API key' }] }
+    }
+    if (res.status === 404) {
+      return { isError: true, content: [{ type: 'text', text: 'NOT_FOUND: Offer not found' }] }
+    }
+    if (res.status === 403) {
+      return { isError: true, content: [{ type: 'text', text: 'FORBIDDEN: No CV parsed for this profile' }] }
+    }
+    if (!res.ok) {
+      return { isError: true, content: [{ type: 'text', text: `HTTP_${res.status}: ${res.statusText}` }] }
+    }
+
+    const data = await res.json()
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+  }
+
   if (req.params.name !== 'scan_offer') {
     return {
       isError: true,
@@ -155,7 +207,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     content: [
       {
         type: 'text',
-        text: `Offer created. offerId=${result.offerId}\nOpen: ${API_URL}/offers/${result.offerId}`,
+        text: `Offer created. offerId=${result.offerId}\nOpen: ${API_URL}/app/offers?offerId=${result.offerId}`,
       },
     ],
   }

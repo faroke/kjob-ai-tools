@@ -103,31 +103,61 @@ const KJOB_WORKFLOW_PROMPT = `You are assisting a job seeker using kjob, an AI-p
 
 ## Tools available
 
-| Tool | Description | Credits |
-|------|-------------|---------|
-| get_profile | Fetch the candidate's structured CV + job preferences | Free |
-| get_match_context(offerId) | Fetch a saved offer + candidate CV for local matching | Free |
-| scan_offer(rawContent, sourceUrl?) | Parse and save a job offer via kjob AI | Costs credits |
+| Tool | Credits | Description |
+|------|---------|-------------|
+| get_profile() | Free | Candidate's structured CV + job preferences |
+| get_match_context(offerId) | Free | Saved offer details + candidate CV |
+| save_cv(offerId, content, tone?) | Free | Save a Claude-generated CV to kjob |
+| save_ldm(offerId, content, tone?) | Free | Save a Claude-generated cover letter to kjob |
+| scan_offer(rawContent, sourceUrl?) | 5 credits | Parse and save a job offer via kjob AI |
 
 ## Workflow
 
 ### Session start
-Call get_profile() immediately to load the candidate's context (experiences, skills, education, job preferences). This lets you give informed answers without asking the user to repeat themselves.
+Call get_profile() to load the candidate's full context. Do this before anything else.
 
-### When the user shares a job offer (URL or pasted text)
-1. Call scan_offer({ rawContent, sourceUrl? }) — extracts and saves the offer. Returns offerId.
-2. Call get_match_context({ offerId }) — returns offer details + candidate CV.
-3. Analyse the fit yourself and present:
-   - Estimated fit score (e.g. 7/10)
-   - Key strengths matching the requirements
-   - Gaps or weak areas vs. requirements
-   - Concrete suggestions (keywords to highlight, missing skills to address)
+### When the user shares a job offer
+1. scan_offer({ rawContent, sourceUrl? }) → returns offerId
+2. get_match_context({ offerId }) → returns offer + profile data
+3. Analyse fit: score, strengths, gaps, suggestions
+
+### When the user asks to generate a CV
+1. get_match_context({ offerId }) if not already done
+2. Generate CvContentJson yourself using the schema and instructions below
+3. save_cv({ offerId, content: <CvContentJson>, tone? })
+
+### When the user asks to generate a cover letter (LDM)
+1. get_match_context({ offerId }) if not already done
+2. Generate LdmContentJson yourself using the schema and instructions below
+3. save_ldm({ offerId, content: <LdmContentJson>, tone? })
+
+## CvContentJson schema
+{
+  "header": { "fullName": "string", "title": "string (job title adapted to the offer)", "email": "string", "phone": "string|null", "location": "string|null" },
+  "summary": "string (2-3 punchy sentences tailored to the offer)",
+  "experience": [{ "company": "string", "role": "string", "period": "string", "highlights": ["string (action verb + result)"] }],
+  "education": [{ "institution": "string", "degree": "string", "year": "string" }],
+  "skills": [{ "category": "string", "items": ["string"] }],
+  "languages": [{ "name": "string", "level": "string" }]
+}
+CV generation rules: adapt summary and highlights to the offer requirements; prioritise skills matching the offer; use action verbs and metrics; if confirmedSkillsContext is present, include those skills first; never invent information.
+
+## LdmContentJson schema
+{
+  "greeting": "string (e.g. Madame, Monsieur,)",
+  "introduction": "string (1 hook paragraph linking candidate to the role)",
+  "body": ["string (paragraph 1 — key skills vs offer)", "string (paragraph 2 — motivation + company fit)"],
+  "conclusion": "string (call to action)",
+  "closing": "string (e.g. Dans l'attente de votre retour, je reste disponible pour un entretien.)",
+  "personalizations": [{ "text": "string (excerpt that is offer-specific)", "reason": "string (why it's personalised)" }]
+}
+LDM generation rules: tailor every paragraph to the specific offer and company; highlight experiences matching the requirements; list all personalizations; write in French unless the profile/offer indicates otherwise; never invent information.
 
 ## Rules
-- Always call get_profile first — it's free and gives full context.
-- Do NOT trigger the kjob match API (/api/offers/{id}/match) — it costs credits. Use get_match_context + your own analysis.
-- If get_profile or get_match_context returns 403: the user has no parsed CV — ask them to upload their CV in kjob settings (Profile tab).
-- If scan_offer returns 402: the user has insufficient credits.`
+- Always call get_profile first — free, gives full context.
+- Never call /api/offers/{id}/match or /api/offers/{id}/generate/cv or /api/offers/{id}/generate/ldm — those cost credits. Do the work yourself and use save_cv / save_ldm.
+- 403 on get_profile or get_match_context → user has no parsed CV, ask them to upload in kjob Profile tab.
+- 402 on scan_offer → insufficient credits.`
 
 const server = new Server(
   { name: 'kjob-mcp', version: '0.1.0' },
@@ -167,6 +197,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: {},
+      },
+    },
+    {
+      name: 'save_cv',
+      description:
+        'Save a Claude-generated CV (CvContentJson) to kjob for an offer. Use this after generating the CV yourself from get_match_context data — costs 0 credits.',
+      inputSchema: {
+        type: 'object',
+        required: ['offerId', 'content'],
+        properties: {
+          offerId: { type: 'string', description: 'The offer UUID.' },
+          content: {
+            type: 'object',
+            description: 'CvContentJson: { header, summary, experience, education, skills, languages }',
+          },
+          tone: { type: 'string', description: 'Writing tone (default: professionnel).' },
+        },
+      },
+    },
+    {
+      name: 'save_ldm',
+      description:
+        'Save a Claude-generated cover letter (LdmContentJson) to kjob for an offer. Use this after writing the letter yourself from get_match_context data — costs 0 credits.',
+      inputSchema: {
+        type: 'object',
+        required: ['offerId', 'content'],
+        properties: {
+          offerId: { type: 'string', description: 'The offer UUID.' },
+          content: {
+            type: 'object',
+            description: 'LdmContentJson: { greeting, introduction, body, conclusion, closing, personalizations }',
+          },
+          tone: { type: 'string', description: 'Writing tone (default: professionnel).' },
+        },
       },
     },
     {
@@ -230,6 +294,42 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
     const data = await res.json()
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
+  }
+
+  if (req.params.name === 'save_cv' || req.params.name === 'save_ldm') {
+    const docType = req.params.name === 'save_cv' ? 'cv' : 'ldm'
+    const args = req.params.arguments as { offerId?: unknown; content?: unknown; tone?: unknown } | undefined
+
+    if (typeof args?.offerId !== 'string' || typeof args?.content !== 'object' || args.content === null) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: 'Invalid input: offerId (string) and content (object) are required' }],
+      }
+    }
+
+    const res = await fetch(`${API_URL}/api/mcp/documents/${docType}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ offerId: args.offerId, content: args.content, tone: args.tone }),
+    })
+
+    if (res.status === 401) {
+      return { isError: true, content: [{ type: 'text', text: 'UNAUTHORIZED: Invalid API key' }] }
+    }
+    if (res.status === 404) {
+      return { isError: true, content: [{ type: 'text', text: 'NOT_FOUND: Offer not found' }] }
+    }
+    if (!res.ok) {
+      return { isError: true, content: [{ type: 'text', text: `HTTP_${res.status}: ${res.statusText}` }] }
+    }
+
+    const data = await res.json() as { documentId: string; viewUrl: string }
+    return {
+      content: [{
+        type: 'text',
+        text: `${docType.toUpperCase()} saved. documentId=${data.documentId}\nView: ${data.viewUrl}`,
+      }],
+    }
   }
 
   if (req.params.name === 'get_match_context') {

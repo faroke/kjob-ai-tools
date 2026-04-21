@@ -1,141 +1,81 @@
 ---
-name: kjob-mcp
-description: Guide Claude when using the kjob MCP server. Triggers when the user shares a job offer, asks about their CV, or requests a cover letter / CV generation.
+name: kjob
+description: kjob job application assistant. Provides /scan, /cv, /ldm and /kjob commands via the kjob MCP server. Triggers on any of these commands or when the user shares a job offer.
 ---
 
-# kjob MCP — Workflow Guide
+# kjob — Command Reference
 
-## Tools available
+## Tools
 
 | Tool | Credits | Description |
 |------|---------|-------------|
-| `get_profile()` | Free | Candidate's structured CV + job preferences |
-| `create_offer(rawContent, parsedContent, sourceUrl?)` | **Free** | Save an offer you parsed yourself — preferred |
-| `get_match_context(offerId)` | Free | Saved offer details + candidate CV |
-| `save_cv(offerId, content, tone?)` | Free | Save a Claude-generated CV to kjob |
-| `save_ldm(offerId, content, tone?)` | Free | Save a Claude-generated cover letter to kjob |
+| `get_profile()` | Free | Candidate CV + preferences |
+| `create_offer(rawContent, parsedContent, sourceUrl?)` | Free | Save a parsed offer |
+| `get_match_context(offerId)` | Free | Offer details + candidate CV |
+| `save_cv(offerId, content, tone?)` | Free | Save a generated CV |
+| `save_ldm(offerId, content, tone?)` | Free | Save a generated cover letter |
 | `scan_offer(rawContent, sourceUrl?)` | 5 credits | Parse via kjob AI — fallback only |
 
-## Recommended workflow
+---
 
-### Session start
-Call `get_profile()` immediately — free, gives you the full candidate context (experiences, skills, education, job preferences) without asking the user to repeat themselves.
+## /scan
 
-### User shares a job offer (preferred — 0 credits)
-1. Extract `ParsedOfferContent` yourself from the raw text/HTML (schema below)
-2. `create_offer({ rawContent, parsedContent, sourceUrl? })` → returns `offerId`
-3. `get_match_context({ offerId })` → returns offer details + candidate CV
-4. Analyse fit yourself: score, strengths, gaps, concrete suggestions
+Save a job offer to kjob. Input: URL or raw text.
 
-### User shares a job offer (fallback — 5 credits)
-Only use `scan_offer` if the content is too complex or ambiguous to extract reliably.
-
-### User asks to generate a CV
-1. `get_match_context({ offerId })` if not already done
-2. Generate `CvContentJson` yourself (see schema below)
-3. `save_cv({ offerId, content: <CvContentJson>, tone? })` → saves to kjob, returns link
-
-### User asks to generate a cover letter (LDM)
-1. `get_match_context({ offerId })` if not already done
-2. Generate `LdmContentJson` yourself (see schema below)
-3. `save_ldm({ offerId, content: <LdmContentJson>, tone? })` → saves to kjob, returns link
+1. `get_profile()` — if not already called this session
+2. Extract `ParsedOfferContent` yourself from the raw text/HTML
+3. `create_offer({ rawContent, parsedContent, sourceUrl? })` → `offerId`
+4. Reply: `✓ Offre sauvegardée (offerId: …)`
 
 ---
 
-## ParsedOfferContent schema (for `create_offer`)
+## /cv [offerId]
 
-```json
-{
-  "title": "string | null",
-  "company": "string | null",
-  "location": "string | null",
-  "contractType": "string | null — CDI, CDD, Freelance, Stage, Alternance…",
-  "salary": "string | null",
-  "description": "string | null — full job description, max 5000 chars",
-  "requirements": ["string"] ,
-  "benefits": ["string"]
-}
-```
+Generate a tailored CV.
+
+1. `get_match_context({ offerId })`
+2. Generate `CvContentJson` — see [schemas](references/schemas.md)
+3. `save_cv({ offerId, content })` → link
+4. Reply with the link
 
 ---
 
-## CvContentJson schema
+## /ldm [offerId]
 
-```json
-{
-  "header": {
-    "fullName": "string",
-    "title": "string — job title adapted to the offer",
-    "email": "string",
-    "phone": "string (optional)",
-    "location": "string (optional)"
-  },
-  "summary": "string — 2-3 punchy sentences tailored to the offer",
-  "experience": [
-    {
-      "company": "string",
-      "role": "string",
-      "period": "string",
-      "highlights": ["string — action verb + quantified result"]
-    }
-  ],
-  "education": [{ "institution": "string", "degree": "string", "year": "string" }],
-  "skills": [
-    { "category": "string — e.g. Langages, Frameworks, Outils", "items": ["string"] }
-  ],
-  "languages": [{ "name": "string", "level": "string" }]
-}
-```
+Generate a cover letter.
 
-> **Common mistakes — these WILL crash the frontend:**
-> - `skills` must be `{ category, items[] }[]` — **never** a flat `string[]`
-> - `experience[].highlights` must be `string[]` — **never** `description` or `summary`
-> - `languages[].name` must be `name` — **never** `language`
-
-**Generation rules:**
-- Adapt summary and highlights to the offer requirements
-- Group skills by category (Langages, Frameworks, Outils, Méthodologies…)
-- Use action verbs and metrics in highlights
-- If `confirmedSkillsContext` is present, include those skills first
-- Never invent information — only use data from `parsedCvJson`
+1. `get_match_context({ offerId })` — skip if already done
+2. Generate `LdmContentJson` — see [schemas](references/schemas.md)
+3. `save_ldm({ offerId, content })` → link
+4. Reply with the link
 
 ---
 
-## LdmContentJson schema
+## /kjob [offer_url_or_text]
 
-```json
-{
-  "greeting": "string — e.g. Madame, Monsieur,",
-  "introduction": "string — 1 hook paragraph linking candidate to the role",
-  "body": [
-    "string — paragraph 1: key skills vs offer requirements",
-    "string — paragraph 2: motivation + company fit"
-  ],
-  "conclusion": "string — call to action paragraph",
-  "closing": "string — e.g. Dans l'attente de votre retour, je reste disponible pour un entretien.",
-  "personalizations": [
-    {
-      "text": "string — excerpt from the letter that is offer-specific",
-      "reason": "string — why this element is personalised"
-    }
-  ]
-}
-```
+Full workflow — scan → analyze → CV + LDM in one shot.
 
-**Generation rules:**
-- Tailor every paragraph to the specific offer and company
-- Highlight experiences that match the requirements
-- List all personalizations explicitly
-- Write in French unless the profile/offer indicates otherwise
-- Never invent information
+1. **Scan** — `/scan` → `offerId`
+2. **Analyze** — score (0–100), top 3 strengths, top 3 gaps vs. candidate profile
+3. **CV** — `/cv {offerId}` → link
+4. **LDM** — `/ldm {offerId}` → link
+5. **Summary:**
+   ```
+   ✓ kjob — {company} · {title}
+   Match : {score}/100
+   Atouts : …
+   Axes d'amélioration : …
+   CV  → {cv_link}
+   LDM → {ldm_link}
+   ```
 
 ---
 
 ## Rules
 
 - **Always prefer `create_offer` over `scan_offer`** — extract `ParsedOfferContent` yourself, 0 credits.
-- **Never** call `/api/offers/{id}/match`, `/api/offers/{id}/generate/cv`, or `/api/offers/{id}/generate/ldm` — those cost credits. Do the work yourself.
-- **403** on `get_profile` or `get_match_context` → user has no parsed CV, ask them to upload in kjob settings (Profile tab).
+- **Never** call `/api/offers/{id}/match`, `/api/offers/{id}/generate/cv`, or `/api/offers/{id}/generate/ldm` — those cost credits.
+- **403** on `get_profile` or `get_match_context` → user has no parsed CV, ask them to upload at kjob.fr/app/profile (Profile tab).
 - **402** on `scan_offer` → insufficient credits.
 
 ---
